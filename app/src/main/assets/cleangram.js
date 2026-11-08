@@ -145,7 +145,7 @@
     const list = onList();
     // Back arrow: not on the message list (the app has its own tabs); it stays in a chat.
     for (const el of document.querySelectorAll(".cg-back")) if (!list) el.classList.remove("cg-back");
-    if (!list) { flowOff(); return; }
+    if (!list) { flowOff(); flow.failed = false; return; }
     const back = document.querySelector('svg[aria-label="Back"]');
     if (back) (back.closest('a, button, [role="button"]') || back).classList.add("cg-back");
 
@@ -246,8 +246,16 @@
       while (block.parentElement && !block.parentElement.contains(compose)) block = block.parentElement;
     } else if (search) {
       for (let i = 0; i < 3 && block.parentElement; i++) block = block.parentElement;
-    } else if (flow.on && flow.head && flow.head.nextElementSibling) {
-      block = flow.head.nextElementSibling;   // no Search box found: just below the header
+    } else if (compose) {
+      // No Search box found: just below the header's block.
+      let h = compose;
+      for (let i = 0; i < 12 && h.parentElement && h.parentElement !== document.body; i++) {
+        const p = h.parentElement;
+        if (p.getBoundingClientRect().height > 140) break;
+        h = p;
+      }
+      block = h.nextElementSibling;
+      if (block === row) block = row.nextElementSibling;
     }
     if (!block || !block.parentElement) return;
     if (row.nextElementSibling !== block || row.parentElement !== block.parentElement) {
@@ -258,7 +266,7 @@
   // --- one scroll for the whole inbox --------------------------------------------------------
 
   const flow = { on: false, P: null, L: null, head: null, spacer: null, holder: null, touched: [],
-    S: 0, V: 0, top: 0, stick: 0, lastL: -1, nextTry: 0, sweeps: 0 };
+    S: 0, V: 0, top: 0, stick: 0, lastL: -1, nextTry: 0, sweeps: 0, failed: false };
 
   /** Inline styles, each remembered so leaving the list puts Instagram's page back exactly. */
   function setStyle(el, props) {
@@ -295,15 +303,18 @@
       col = col.parentElement;
     }
     const below = anchor.getBoundingClientRect().bottom - 4;
-    let best = null, bestH = 0;
+    // Something that really has more to scroll beats a box that merely could.
+    let best = null, bestScore = 0;
     for (const el of col.querySelectorAll("div, ul, section")) {
       const h = el.clientHeight;
-      if (h < 120 || h <= bestH || el.contains(anchor)) continue;
+      if (h < 120 || el.contains(anchor)) continue;
+      const score = h + (el.scrollHeight > h + 20 ? 100000 : 0);
+      if (score <= bestScore) continue;
       const oy = getComputedStyle(el).overflowY;
       if (oy !== "auto" && oy !== "scroll") continue;
       if (el.getBoundingClientRect().top < below) continue;
       best = el;
-      bestH = h;
+      bestScore = score;
     }
     return best;
   }
@@ -330,7 +341,7 @@
       flowOff();
     }
     const now = Date.now();
-    if (now < flow.nextTry) return;
+    if (now < flow.nextTry || flow.failed) return;
     flow.nextTry = now + 800;
     const anchor = search || compose;
     if (!anchor) { html.setAttribute("data-cg-flow", "no-anchor"); return; }
@@ -354,8 +365,10 @@
     }
 
     // The column scrolls; between it and the list nothing holds a fixed height any more.
+    // (Both directions: a box clipping sideways would still trap the list's height.)
     for (let el = L.parentElement; el && el !== P; el = el.parentElement) {
-      setStyle(el, { height: "auto", "max-height": "none", "min-height": "0", "overflow-y": "visible" });
+      setStyle(el, { height: "auto", "max-height": "none", "min-height": "0", "overflow-x": "visible",
+        "overflow-y": "visible", contain: "none" });
       columnChild(el);
     }
     columnChild(L);
@@ -373,6 +386,47 @@
     addEventListener("resize", onResize, { passive: true });
     if (L.scrollTop > 0) P.scrollTop = L.scrollTop + flow.stick;
     html.setAttribute("data-cg-flow", "on");
+    html.setAttribute("data-cg-flowinfo", describe());
+    requestAnimationFrame(() => requestAnimationFrame(verify));
+  }
+
+  /**
+   * Does the column really scroll now? If Instagram's page holds it some way this can't undo,
+   * give the page back exactly as it was (its own scrolling) rather than leave a stuck inbox.
+   */
+  function verify() {
+    if (!flow.on) return;
+    flowMeasure();
+    const P = flow.P;
+    const room = P.scrollHeight - P.clientHeight;
+    let moves = true;
+    if (flow.S > 40) {
+      const was = P.scrollTop;
+      P.scrollTop = was + 2;
+      moves = P.scrollTop !== was;
+      P.scrollTop = was;
+    }
+    if (moves && (flow.S <= 40 || room >= flow.S * 0.9)) return;
+    const info = describe() + " room=" + room;
+    flowOff();
+    flow.failed = true;
+    html.setAttribute("data-cg-flow", "failed");
+    html.setAttribute("data-cg-flowinfo", info);
+  }
+
+  /** For page maps: what the column and list are, and everything between. */
+  function describe() {
+    const one = (el) => {
+      const cs = getComputedStyle(el);
+      return el.tagName.toLowerCase() + "[" + [cs.display, cs.flexDirection, cs.flex, "ov=" + cs.overflowX + "/" + cs.overflowY,
+        cs.position, "h=" + el.clientHeight, "sh=" + el.scrollHeight, cs.contain].join(",") + "]";
+    };
+    try {
+      const chain = [];
+      for (let el = flow.L; el && el !== flow.P.parentElement; el = el.parentElement) chain.push(one(el));
+      return "S=" + flow.S + " stick=" + flow.stick + " top=" + flow.top + " head=" + (flow.head ? one(flow.head) : "-") +
+        " list>column: " + chain.join(" < ");
+    } catch (e) { return "describe failed"; }
   }
 
   /** In a top-to-bottom flex box, a child keeps its own height instead of being squeezed to fit. */
@@ -380,7 +434,9 @@
     const p = el.parentElement;
     if (!p) return;
     const cs = getComputedStyle(p);
-    if (/flex/.test(cs.display) && /column/.test(cs.flexDirection)) setStyle(el, { "flex-grow": "0", "flex-shrink": "0" });
+    if (/flex/.test(cs.display) && /column/.test(cs.flexDirection)) {
+      setStyle(el, { "flex-grow": "0", "flex-shrink": "0", "flex-basis": "auto" });
+    }
   }
 
   function pinHeader() {

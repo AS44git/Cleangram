@@ -79,6 +79,9 @@ class MainActivity : AppCompatActivity() {
     private var trayLoaded = 0L
     private var stories: String? = null
     private var trayGen = 0
+    private var trayReads = 0
+    private var trayBlocked: String? = null
+    private var storiesFound = 0
 
     private val prefs by lazy { getSharedPreferences("cleangram", MODE_PRIVATE) }
     private val pageScript by lazy {
@@ -351,8 +354,11 @@ class MainActivity : AppCompatActivity() {
         }
         tray.webViewClient = object : WebViewClient() {
             // Only ever Instagram's Home page here: it goes nowhere else (nobody taps this view).
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                request.isForMainFrame && Routes.classify(request.url.toString()) != Route.HOME
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                if (!request.isForMainFrame || Routes.classify(request.url.toString()) == Route.HOME) return false
+                trayBlocked = request.url.path
+                return true
+            }
 
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                 if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
@@ -382,8 +388,10 @@ class MainActivity : AppCompatActivity() {
     private fun readStories(gen: Int, attempt: Int) {
         if (isFinishing || gen != trayGen) return
         tray.evaluateJavascript(readStoriesJs) { value ->
+            trayReads++
             val json = runCatching { JSONTokener(value).nextValue() as? String }.getOrNull()
             if (!json.isNullOrEmpty()) {
+                storiesFound = runCatching { org.json.JSONArray(json).length() }.getOrDefault(0)
                 if (json != stories) {
                     stories = json
                     prefs.edit().putString("stories", json).apply()
@@ -524,6 +532,7 @@ class MainActivity : AppCompatActivity() {
         if (tab != Tab.PROFILE) return false
         val noflow = prefs.getBoolean("noflow", false)
         val items = arrayOf(
+            "Status (screenshot this for Claude)",
             "Save page map (for tuning)",
             "Save Home page map (Stories)",
             if (noflow) "Scroll the whole inbox together" else "Scroll only the message list (Instagram's way)",
@@ -535,21 +544,54 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Cleangram")
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> savePageMap(web, route.css)
-                    1 -> savePageMap(tray, "home")
-                    2 -> {
+                    0 -> showStatus()
+                    1 -> savePageMap(web, route.css)
+                    2 -> savePageMap(tray, "home")
+                    3 -> {
                         prefs.edit().putBoolean("noflow", !noflow).apply()
                         web.evaluateJavascript(
                             if (noflow) "document.documentElement.removeAttribute('data-cg-noflow')"
                             else "document.documentElement.setAttribute('data-cg-noflow','1')", null)
                     }
-                    3 -> { web.reload(); loadTray() }
-                    4 -> web.url?.let { openOutside(Uri.parse(it)) }
-                    5 -> { prefs.edit().remove("me").apply(); toast("Forgotten") }
+                    4 -> { web.reload(); loadTray() }
+                    5 -> web.url?.let { openOutside(Uri.parse(it)) }
+                    6 -> { prefs.edit().remove("me").apply(); toast("Forgotten") }
                 }
             }
             .show()
         return true
+    }
+
+    /** What the inbox layout and the Stories reader are doing, in a few lines (no message text). */
+    private fun showStatus() {
+        val mainJs = "(function(){var h=document.documentElement;return JSON.stringify({route:h.getAttribute('data-cg-route')," +
+            "flow:h.getAttribute('data-cg-flow'),info:h.getAttribute('data-cg-flowinfo'),noflow:h.hasAttribute('data-cg-noflow')," +
+            "row:!!document.getElementById('cg-stories'),search:!!document.querySelector('input[placeholder*=\"Search\" i],input[aria-label*=\"Search\" i],input[type=\"search\"]')," +
+            "compose:!!document.querySelector('svg[aria-label=\"New message\"]'),inputs:Array.prototype.map.call(document.querySelectorAll('input'),function(i){return i.type+':'+(i.placeholder||i.getAttribute('aria-label')||'')}).join('|')," +
+            "w:innerWidth,h:innerHeight})})()"
+        val trayJs = "(function(){return JSON.stringify({path:location.pathname,title:document.title," +
+            "pics:document.querySelectorAll('img[alt*=\"profile picture\"]').length,imgs:document.images.length," +
+            "canvases:document.querySelectorAll('canvas').length,login:!!document.querySelector('input[name=\"username\"]')," +
+            "text:document.body?document.body.innerText.length:0})})()"
+        web.evaluateJavascript(mainJs) { m ->
+            tray.evaluateJavascript(trayJs) { t ->
+                val text = buildString {
+                    append("Cleangram ").append(packageManager.getPackageInfo(packageName, 0).versionName).append("\n\n")
+                    append("INBOX\n").append(runCatching { JSONTokener(m).nextValue() as String }.getOrDefault(m)).append("\n\n")
+                    append("STORIES\nloaded ").append(if (trayLoaded == 0L) "never" else "${(SystemClock.elapsedRealtime() - trayLoaded) / 1000}s ago")
+                    append(", reads ").append(trayReads).append(", found ").append(storiesFound)
+                    append(", saved ").append(if (stories == null) "none" else "yes")
+                    append(", blocked ").append(trayBlocked ?: "-").append("\nhome view ").append(tray.url ?: "-").append("\n")
+                    append(runCatching { JSONTokener(t).nextValue() as String }.getOrDefault(t))
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("Status")
+                    .setMessage(text)
+                    .setPositiveButton("OK", null)
+                    .show()
+                    .findViewById<android.widget.TextView>(android.R.id.message)?.apply { setTextIsSelectable(true); textSize = 12f }
+            }
+        }
     }
 
     // --- page maps ---------------------------------------------------------------------------

@@ -4,21 +4,39 @@
  * shows; nothing is requested. Evaluated by the app; returns a JSON string (or "").
  */
 (() => {
+  const PIC = /profile picture/i;
+  // Pictures that could be in the Stories row: not in a post, not a link to someone's profile.
+  function candidates() {
+    return Array.from(document.querySelectorAll("img[alt]")).filter((img) =>
+      PIC.test(img.getAttribute("alt") || "") && !img.closest("article") &&
+      !(img.closest("a[href]") && !/^\/stories\//.test(img.closest("a[href]").getAttribute("href") || "")));
+  }
+
   function findTray() {
+    const imgs = candidates();
+    if (!imgs.length) return null;
+    // 1. The topmost sideways-scrolling row of pictures (how the phone site lays it out).
     let best = null;
-    for (const img of document.querySelectorAll("img[alt]")) {
-      if (!/profile picture/i.test(img.getAttribute("alt") || "")) continue;
+    for (const img of imgs) {
       for (let el = img.parentElement, i = 0; el && el !== document.body && i < 12; el = el.parentElement, i++) {
         const ox = getComputedStyle(el).overflowX;
-        if ((ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth + 8) {
+        if ((ox === "auto" || ox === "scroll" || ox === "hidden") && el.scrollWidth > el.clientWidth + 8) {
           const top = el.getBoundingClientRect().top + scrollY;
           if (!best || top < best.top) best = { el, top };
           break;
         }
       }
     }
-    return best && best.el;
+    if (best && best.el.querySelectorAll("img[alt]").length >= 1) return best.el;
+    // 2. Otherwise: the smallest box holding the first few pictures, in page order.
+    const want = Math.min(3, imgs.length);
+    for (let el = imgs[0].parentElement, i = 0; el && el !== document.body && i < 14; el = el.parentElement, i++) {
+      const n = imgs.filter((x) => el.contains(x)).length;
+      if (n >= want && (want > 1 || i >= 3)) return el;
+    }
+    return null;
   }
+
   const tray = findTray();
   if (!tray) return "";
   const out = [];
