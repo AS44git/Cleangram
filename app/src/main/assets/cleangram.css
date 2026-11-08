@@ -20,3 +20,13 @@ html[data-cg-route="post"] main a[href^="/reel/"] video { visibility: hidden !im
 
 /* Nothing selects text by accident on a long-press, like an app. */
 html[data-cg] { -webkit-tap-highlight-color: transparent; }
+
+/* The inbox, laid out like the app: no back arrow on the list, a heart beside New message,
+   the Stories row (a frame following its spacer, under the header). */
+.cg-back { display: none !important; }
+.cg-heart { display: inline-flex; align-items: center; justify-content: center; color: inherit;
+  width: 40px; height: 40px; margin-right: 4px; }
+#cg-tray-spacer { width: 100%; flex: none; }
+#cg-tray-box { position: fixed; left: 0; right: 0; overflow: hidden; pointer-events: none; z-index: 2; display: none; }
+#cg-tray-frame { display: block; width: 100%; height: 120px; border: 0; background: transparent;
+  pointer-events: auto; will-change: transform; color-scheme: normal; }

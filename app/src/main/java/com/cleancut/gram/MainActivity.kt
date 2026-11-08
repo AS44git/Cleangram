@@ -85,7 +85,14 @@ class MainActivity : AppCompatActivity() {
         assets.open("cleangram.js").bufferedReader().readText()
             .replace("\"__CLEANGRAM_CSS__\"", JSONObject.quote(css))
     }
-    private val trayScript by lazy { assets.open("tray.js").bufferedReader().readText() }
+    private val traySource by lazy { assets.open("tray.js").bufferedReader().readText() }
+    /** In the main view: only acts inside the inbox's Stories frame. */
+    private val trayFramed by lazy { traySource.replace("\"__CG_STANDALONE__\"", "\"0\"") }
+    /** In the fallback row's own view. */
+    private val trayStandalone by lazy { traySource.replace("\"__CG_STANDALONE__\"", "\"1\"") }
+    /** True once the inbox page reports Instagram won't run in a frame: the separate row instead. */
+    private var trayFallback = false
+    private var trayCollapsed = false
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data))
@@ -224,7 +231,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun setUpMain() {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            WebViewCompat.addDocumentStartJavaScript(web, pageScript, setOf(Routes.ORIGIN, "https://instagram.com"))
+            val origins = setOf(Routes.ORIGIN, "https://instagram.com")
+            WebViewCompat.addDocumentStartJavaScript(web, pageScript, origins)
+            WebViewCompat.addDocumentStartJavaScript(web, trayFramed, origins)   // the inbox's Stories frame
         }
 
         web.webViewClient = object : WebViewClient() {
@@ -251,9 +260,7 @@ class MainActivity : AppCompatActivity() {
                 progress.visibility = View.GONE
                 hideSplash()
                 learnProfile()
-                if (trayLoaded == 0L && Routes.classify(url) != Route.ACCOUNTS) {
-                    view.postDelayed({ loadTray() }, 600)
-                }
+                watchTray(0)
             }
 
             override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
@@ -339,7 +346,7 @@ class MainActivity : AppCompatActivity() {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             val origins = setOf(Routes.ORIGIN, "https://instagram.com")
             WebViewCompat.addDocumentStartJavaScript(tray, pageScript, origins)
-            WebViewCompat.addDocumentStartJavaScript(tray, trayScript, origins)
+            WebViewCompat.addDocumentStartJavaScript(tray, trayStandalone, origins)
         }
         tray.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -354,7 +361,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                 if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                     view.evaluateJavascript(pageScript, null)
-                    view.evaluateJavascript(trayScript, null)
+                    view.evaluateJavascript(trayStandalone, null)
                 }
             }
 
@@ -397,9 +404,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** The row shows on the message list only (not in a chat), once it has a height. */
+    /**
+     * Fallback only (the Stories row normally lives inside the inbox page): the separate row
+     * shows on the message list, and folds away while the list is scrolled down.
+     */
     private fun updateTray() {
-        val show = trayHeightPx > 0 && route == Route.INBOX && path.trimEnd('/') == "/direct/inbox"
+        val show = trayFallback && !trayCollapsed && trayHeightPx > 0 && route == Route.INBOX && path.trimEnd('/') == "/direct/inbox"
         val want = if (show) View.VISIBLE else View.GONE
         if (tray.visibility != want) {
             tray.visibility = want
@@ -410,6 +420,49 @@ class MainActivity : AppCompatActivity() {
             trayLoaded = SystemClock.elapsedRealtime()
             tray.reload()
         }
+    }
+
+    /** Whether the inbox page's own Stories row works here; if not, the fallback row takes over. */
+    private fun watchTray(attempt: Int) {
+        if (trayFallback || attempt > 40) return
+        web.evaluateJavascript("document.documentElement.getAttribute('data-cg-tray')") { value ->
+            when (runCatching { JSONTokener(value).nextValue() as? String }.getOrNull()) {
+                "ok" -> return@evaluateJavascript
+                "failed" -> {
+                    trayFallback = true
+                    loadTray()
+                    watchScroll()
+                    return@evaluateJavascript
+                }
+            }
+            web.postDelayed({ watchTray(attempt + 1) }, 1000)
+        }
+    }
+
+    /** Fallback row: is the message list scrolled away from the top? (Polled; no bridge.) */
+    private fun watchScroll() {
+        if (!trayFallback || isFinishing) return
+        if (route == Route.INBOX && path.trimEnd('/') == "/direct/inbox") {
+            val js = """
+                (function(){
+                  var top = (document.scrollingElement || document.documentElement).scrollTop;
+                  var s = document.querySelector('input[placeholder^="Search"]');
+                  for (var el = s; el && el !== document.body; el = el.parentElement) {
+                    var o = getComputedStyle(el).overflowY;
+                    if ((o === 'auto' || o === 'scroll') && el.scrollHeight > el.clientHeight) { top = Math.max(top, el.scrollTop); break; }
+                  }
+                  return top;
+                })()
+            """.trimIndent()
+            web.evaluateJavascript(js) { value ->
+                val scrolled = (value.toDoubleOrNull() ?: 0.0) > 12
+                if (scrolled != trayCollapsed) {
+                    trayCollapsed = scrolled
+                    updateTray()
+                }
+            }
+        }
+        web.postDelayed({ watchScroll() }, 180)
     }
 
     // --- pages -------------------------------------------------------------------------------
@@ -427,6 +480,9 @@ class MainActivity : AppCompatActivity() {
         route = r
         path = url?.let { Uri.parse(it).path } ?: "/"
         web.evaluateJavascript("document.documentElement.setAttribute('data-cg-route','${r.css}')", null)
+        prefs.getString("me", null)?.let { me ->
+            web.evaluateJavascript("document.documentElement.setAttribute('data-cg-me',${JSONObject.quote(me)})", null)
+        }
         if (prefs.getString("me", null) == null) web.postDelayed({ learnProfile() }, 1200)
         bar.select(
             when (r) {
@@ -533,7 +589,7 @@ class MainActivity : AppCompatActivity() {
                 when (which) {
                     0 -> savePageMap(web, route.css)
                     1 -> savePageMap(tray, "tray")
-                    2 -> { web.reload(); loadTray() }
+                    2 -> { web.reload(); if (trayFallback) loadTray() }
                     3 -> web.url?.let { openOutside(Uri.parse(it)) }
                     4 -> { prefs.edit().remove("me").apply(); toast("Forgotten") }
                 }

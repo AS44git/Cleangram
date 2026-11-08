@@ -15,6 +15,7 @@
   document.documentElement.setAttribute("data-cg", "1");
 
   const CSS = "__CLEANGRAM_CSS__";
+  const IS_TOP = window.top === window;
 
   const RESERVED = new Set(["accounts", "direct", "explore", "reels", "reel", "p", "tv", "stories",
     "about", "legal", "developer", "challenge", "emails", "web", "api", "graphql", "oauth", "privacy",
@@ -51,6 +52,7 @@
     if (html.getAttribute("data-cg-route") !== r) html.setAttribute("data-cg-route", r);
     addStyle();
     if (!document.body) return;
+    if (IS_TOP) inbox();
 
     // Instagram's own tab bar (the app has its own): the smallest block holding its links to
     // Explore or Reels together with Home or Messages, wherever it sits.
@@ -123,6 +125,138 @@
       }
     }
     if (target && target !== document.body && target !== document.documentElement) target.classList.add("cg-hide");
+  }
+
+  // --- the inbox: laid out like the app ------------------------------------------------------
+  //
+  // Stories go under the header and above Search, inside the page so they scroll away with the
+  // messages. They come from Instagram's own Home page in a small sandboxed frame (it can run
+  // its scripts and see its own cookies, nothing else: it can't navigate this page or open
+  // anything), with everything but the Stories tray hidden (tray.js). The frame lives on
+  // <body> so the page re-rendering never reloads it; a spacer in the page holds its place and
+  // the frame follows the spacer as the list scrolls.
+
+  const onList = () => /^\/direct\/inbox\/?$/.test(location.pathname);
+  let spacer = null, box = null, frame = null, trayH = 0, trayState = "none", following = false;
+
+  function inbox() {
+    const list = onList();
+    // Back arrow: not on the message list (the app has its own tabs); it stays in a chat.
+    for (const el of document.querySelectorAll(".cg-back")) if (!list) el.classList.remove("cg-back");
+    if (!list) {
+      if (box) box.style.display = "none";
+      return;
+    }
+    const back = document.querySelector('svg[aria-label="Back"]');
+    if (back) (back.closest('a, button, [role="button"]') || back).classList.add("cg-back");
+
+    const compose = document.querySelector('svg[aria-label="New message"]');
+    addHeart(compose);
+    if (trayState !== "failed") placeTray(compose);
+  }
+
+  /** A heart (your activity) beside "New message", as in the app's header. */
+  function addHeart(compose) {
+    if (!compose || document.querySelector(".cg-heart")) return;
+    const btn = compose.closest('a, button, [role="button"]') || compose;
+    const a = document.createElement("a");
+    a.className = "cg-heart";
+    a.href = "/accounts/activity/";
+    a.setAttribute("aria-label", "Activity");
+    a.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" ' +
+      'stroke-width="2" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-9.2-9.3C1.6 7.6 3.9 4 7.5 4c2 0 3.5 1.1 4.5 ' +
+      '2.6C13 5.1 14.5 4 16.5 4c3.6 0 5.9 3.6 4.7 7.2-1.7 4.7-9.2 9.3-9.2 9.3z"/></svg>';
+    btn.parentElement.insertBefore(a, btn);
+  }
+
+  function placeTray(compose) {
+    const search = document.querySelector('input[placeholder^="Search"]');
+    if (!search) return;
+    // The block holding Search, as a sibling of the header's block: stories go just before it.
+    let block = search;
+    if (compose) {
+      while (block.parentElement && !block.parentElement.contains(compose)) block = block.parentElement;
+    } else {
+      for (let i = 0; i < 3 && block.parentElement; i++) block = block.parentElement;
+    }
+    if (!block.parentElement) return;
+    if (!spacer) {
+      spacer = document.createElement("div");
+      spacer.id = "cg-tray-spacer";
+    }
+    if (spacer.nextElementSibling !== block || spacer.parentElement !== block.parentElement) {
+      block.parentElement.insertBefore(spacer, block);
+    }
+    spacer.style.height = trayH + "px";
+    if (!box) makeFrame();
+    box.style.display = trayH ? "block" : "none";
+    if (!following) { following = true; requestAnimationFrame(follow); }
+  }
+
+  function makeFrame() {
+    box = document.createElement("div");
+    box.id = "cg-tray-box";
+    frame = document.createElement("iframe");
+    frame.id = "cg-tray-frame";
+    frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    frame.setAttribute("scrolling", "no");
+    frame.setAttribute("title", "Stories");
+    frame.src = "/";
+    box.appendChild(frame);
+    document.body.appendChild(box);
+    trayState = "loading";
+    document.documentElement.setAttribute("data-cg-tray", "loading");
+    // No word from the frame in 15 s: Instagram won't be framed here; the app takes over.
+    setTimeout(() => {
+      if (trayState !== "ok") {
+        trayState = "failed";
+        document.documentElement.setAttribute("data-cg-tray", "failed");
+        if (box) box.remove();
+        box = frame = null;
+        if (spacer) spacer.remove();
+      }
+    }, 15000);
+  }
+
+  /** Keep the frame over its spacer, clipped below the header if the header stays put. */
+  function follow() {
+    if (!box || box.style.display === "none" || !spacer || !spacer.isConnected || !onList()) {
+      following = false;
+      if (box && (!onList() || !spacer || !spacer.isConnected)) box.style.display = "none";
+      return;
+    }
+    const r = spacer.getBoundingClientRect();
+    let clip = 0;
+    const compose = document.querySelector('svg[aria-label="New message"]');
+    for (let el = compose, i = 0; el && el !== document.body && i < 10; i++, el = el.parentElement) {
+      const pos = getComputedStyle(el).position;
+      if (pos === "sticky" || pos === "fixed") { clip = Math.max(0, el.getBoundingClientRect().bottom); break; }
+    }
+    box.style.top = clip + "px";
+    box.style.height = Math.max(0, innerHeight - clip) + "px";
+    frame.style.transform = "translateY(" + Math.round(r.top - clip) + "px)";
+    requestAnimationFrame(follow);
+  }
+
+  if (IS_TOP) {
+    addEventListener("message", (e) => {
+      if (e.origin !== location.origin || !e.data || typeof e.data !== "object" || !e.data.cg) return;
+      const d = e.data;
+      if (d.cg === "tray-height" && typeof d.h === "number") {
+        trayH = Math.min(240, Math.max(0, Math.round(d.h)));
+        trayState = "ok";
+        document.documentElement.setAttribute("data-cg-tray", "ok");
+        if (frame) frame.style.height = trayH + "px";
+        if (spacer) spacer.style.height = trayH + "px";
+        if (box && onList()) box.style.display = "block";
+        if (!following && box) { following = true; requestAnimationFrame(follow); }
+      } else if (d.cg === "story" && typeof d.user === "string" && /^[A-Za-z0-9._]{1,30}$/.test(d.user)) {
+        location.assign("/stories/" + d.user + "/");
+      } else if (d.cg === "my-story") {
+        const me = document.documentElement.getAttribute("data-cg-me");
+        if (me) location.assign("/stories/" + me + "/");
+      }
+    });
   }
 
   // At most five sweeps a second, however busy the page: long DM threads change constantly.
