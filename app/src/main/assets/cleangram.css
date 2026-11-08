@@ -1,0 +1,22 @@
+/* Cleangram: what's hidden on instagram.com. Routes come from <html data-cg-route>. */
+
+.cg-hide { display: none !important; }
+
+/* Links into Reels and the Explore grid (the app's own bar replaces Instagram's). */
+a[href="/reels/"], a[href="/explore/"] { display: none !important; }
+
+/* Home: the Stories tray only. Feed posts are articles. */
+html[data-cg-route="home"] article { display: none !important; }
+
+/* Search: people, tags and places only, never the grid of posts. */
+html[data-cg-route="search"] a[href^="/p/"],
+html[data-cg-route="search"] a[href^="/reel/"] { display: none !important; }
+
+/* A single post or reel (sent in a DM, say): no "more posts" grid below it. */
+html[data-cg-route="post"] main a[href^="/p/"] img,
+html[data-cg-route="post"] main a[href^="/reel/"] img,
+html[data-cg-route="post"] main a[href^="/p/"] video,
+html[data-cg-route="post"] main a[href^="/reel/"] video { visibility: hidden !important; }
+
+/* Nothing selects text by accident on a long-press, like an app. */
+html[data-cg] { -webkit-tap-highlight-color: transparent; }

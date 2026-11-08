@@ -1,0 +1,8 @@
+<resources>
+    <color name="bg">#FFFFFF</color>
+    <color name="bar">#FFFFFF</color>
+    <color name="divider">#1F000000</color>
+    <color name="icon">#262626</color>
+    <color name="icon_muted">#8E8E8E</color>
+    <color name="accent">#7B5CFA</color>
+</resources>
