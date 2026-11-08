@@ -11,14 +11,11 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 
 enum class Tab(val icon: Int, val label: String) {
-    HOME(R.drawable.ic_tab_home, "Home"),
-    SEARCH(R.drawable.ic_tab_search, "Search"),
-    NEW(R.drawable.ic_tab_add, "New post"),
     MESSAGES(R.drawable.ic_tab_messages, "Messages"),
     PROFILE(R.drawable.ic_tab_profile, "Profile"),
 }
 
-/** Cleangram's own bottom bar (Instagram's is hidden): five tabs, the current one bold. */
+/** Cleangram's own bottom bar (Instagram's is hidden): Messages and Profile, like Cleancutgram. */
 @SuppressLint("ViewConstructor")
 class TabBar(
     context: Context,
@@ -48,7 +45,7 @@ class TabBar(
                 isClickable = true
                 setOnClickListener {
                     it.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
-                    select(if (tab == Tab.NEW) selected else tab)
+                    select(tab)
                     onTap(tab)
                 }
                 setOnLongClickListener { onLongPress(tab) }

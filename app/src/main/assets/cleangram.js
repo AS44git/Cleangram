@@ -45,8 +45,6 @@
     parent.appendChild(style);
   }
 
-  const NAG = /^(open app|open the app|use the app|get the app|open instagram|switch to the app|not now)$/i;
-
   function sweep() {
     const html = document.documentElement;
     const r = route(location.pathname);
@@ -54,39 +52,77 @@
     addStyle();
     if (!document.body) return;
 
-    // Instagram's own bottom bar: a fixed strip along the bottom with its Home/Explore/Reels
-    // links. The app has its own bar instead.
-    for (const a of document.querySelectorAll('a[href="/reels/"], a[href="/explore/"]')) {
+    // Instagram's own tab bar (the app has its own): the smallest block holding its links to
+    // Explore or Reels together with Home or Messages, wherever it sits.
+    for (const a of document.querySelectorAll('a[href="/explore/"], a[href="/reels/"]')) {
       let el = a.parentElement;
-      for (let i = 0; el && i < 8; i++, el = el.parentElement) {
-        const cs = getComputedStyle(el);
-        if (cs.position === "fixed" || cs.position === "sticky") {
-          const rect = el.getBoundingClientRect();
-          if (rect.bottom >= innerHeight - 4 && rect.height < 120) el.classList.add("cg-hide");
+      for (let i = 0; el && el !== document.body && i < 10; i++, el = el.parentElement) {
+        if (el.querySelector('a[href="/"], a[href^="/direct/"]')) {
+          if (el.getBoundingClientRect().height < 120) el.classList.add("cg-hide");
           break;
         }
       }
     }
 
-    // "Open the app" banners and buttons.
-    for (const el of document.querySelectorAll('a, button, div[role="button"]')) {
-      const t = (el.textContent || "").trim();
-      if (t.length > 0 && t.length < 24 && NAG.test(t) && /app|instagram/i.test(t)) {
-        const box = el.closest('div[role="dialog"], div[role="banner"], section') || el;
-        box.classList.add("cg-hide");
+    // Banners and notes Cleangram leaves out, found by their words: "open the app",
+    // "Instagram Lite", "You're all caught up", suggestions.
+    // Only what's new since the last sweep (or everything, on a new page): cheap even in a
+    // long DM thread.
+    const roots = pageChanged(r) ? [document.body] : takeAdded();
+    const inThread = location.pathname.startsWith("/direct/t/");
+    for (const root of roots) {
+      if (!root.isConnected) continue;
+      const list = root.querySelectorAll ? root.querySelectorAll("span, h1, h2, h3, div, a, button") : [];
+      for (const el of [root, ...list]) {
+        if (!(el instanceof Element) || el.childElementCount > 2) continue;
+        const t = (el.textContent || "").trim();
+        if (t.length === 0 || t.length > 60 || !UNWANTED.test(t)) continue;
+        hideAround(el, inThread);
       }
     }
+  }
 
-    // "Suggested for you" and similar recommendation blocks, wherever they appear.
-    for (const el of document.querySelectorAll("span, h2, h3")) {
-      if (el.childElementCount > 0) continue;
-      const t = (el.textContent || "").trim();
-      if (t === "Suggested for you" || t === "Suggested posts" || t === "Suggested reels"
-          || t === "More posts from" || t === "Discover people") {
-        const box = el.closest("section, article, div[role='presentation']") || el.parentElement;
-        if (box && box !== document.body) box.classList.add("cg-hide");
+  let lastRoute = "";
+  let lastPath = "";
+  function pageChanged(r) {
+    const changed = r !== lastRoute || location.pathname !== lastPath;
+    lastRoute = r;
+    lastPath = location.pathname;
+    if (changed) added.length = 0;
+    return changed;
+  }
+
+  const added = [];
+  function takeAdded() {
+    const out = added.splice(0, added.length);
+    return out.length > 400 ? [document.body] : out;
+  }
+
+  const UNWANTED = /^(open app|open the app|use the app|get the app|open instagram|switch to the app|you'?re all caught up|you'?ve seen all new posts.*|suggested for you|suggested posts|suggested reels|discover people)$|instagram lite/i;
+
+  /**
+   * Hide the banner or block a phrase belongs to: its fixed/sticky/dialog box, or a few levels up.
+   * In a chat, only floating banners: never anything in the conversation itself.
+   */
+  function hideAround(el, floatingOnly) {
+    let target = null;
+    for (let x = el, i = 0; x && x !== document.body && i < 10; i++, x = x.parentElement) {
+      const role = x.getAttribute("role");
+      const pos = getComputedStyle(x).position;
+      if (pos === "fixed" || pos === "sticky" || role === "dialog" || role === "banner" || x.tagName === "SECTION") {
+        target = x;
+        break;
       }
     }
+    if (!target && floatingOnly) return;
+    if (!target) {
+      target = el;
+      for (let i = 0; i < 3 && target.parentElement && target.parentElement !== document.body; i++) {
+        target = target.parentElement;
+        if (target.getBoundingClientRect().height > 260) { target = target.firstElementChild || target; break; }
+      }
+    }
+    if (target && target !== document.body && target !== document.documentElement) target.classList.add("cg-hide");
   }
 
   // At most five sweeps a second, however busy the page: long DM threads change constantly.
@@ -103,7 +139,10 @@
     }), wait);
   }
 
-  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+  new MutationObserver((records) => {
+    for (const rec of records) for (const n of rec.addedNodes) if (n.nodeType === 1) added.push(n);
+    schedule();
+  }).observe(document.documentElement, { childList: true, subtree: true });
   addEventListener("popstate", schedule);
   addEventListener("DOMContentLoaded", schedule);
   schedule();

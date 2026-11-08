@@ -43,6 +43,7 @@ object Routes {
 
     /** Pages Cleangram doesn't show, and where it goes instead. */
     fun redirectFor(route: Route): String? = when (route) {
+        Route.HOME -> INBOX          // the feed (the Stories row above Messages replaces Home)
         Route.REELS -> INBOX         // the Reels feed
         Route.EXPLORE -> SEARCH      // the Explore grid, tag and place grids
         else -> null
