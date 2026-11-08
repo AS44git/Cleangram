@@ -185,7 +185,6 @@ class MainActivity : AppCompatActivity() {
         val s = web.settings
         s.javaScriptEnabled = true
         s.domStorageEnabled = true
-        s.databaseEnabled = true
         s.mediaPlaybackRequiresUserGesture = false
         s.allowFileAccess = false
         s.allowContentAccess = true
