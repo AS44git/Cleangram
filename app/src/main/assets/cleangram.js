@@ -129,30 +129,36 @@
 
   // --- the inbox: laid out like the app ------------------------------------------------------
   //
-  // Stories go under the header and above Search, inside the page so they scroll away with the
-  // messages. They come from Instagram's own Home page in a small sandboxed frame (it can run
-  // its scripts and see its own cookies, nothing else: it can't navigate this page or open
-  // anything), with everything but the Stories tray hidden (tray.js). The frame lives on
-  // <body> so the page re-rendering never reloads it; a spacer in the page holds its place and
-  // the frame follows the spacer as the list scrolls.
+  // Instagram's website keeps the top of the inbox (header, Search, Notes, "Messages") still and
+  // scrolls only the conversation list. The app scrolls it all together, under a header that
+  // stays. So here the inbox's column becomes the one thing that scrolls, the header stays put,
+  // and Instagram's own list sits pinned below it, moved in step (its own scrolling, loading of
+  // more chats and so on carry on exactly as before, it just never sees a finger itself).
+  //
+  // Stories go above Search, as their own row, built from what Instagram's Home page shows in
+  // the app's hidden second view (the app puts it on <html data-cg-stories>).
 
+  const html = document.documentElement;
   const onList = () => /^\/direct\/inbox\/?$/.test(location.pathname);
-  let spacer = null, box = null, frame = null, trayH = 0, trayState = "none", following = false;
 
   function inbox() {
     const list = onList();
     // Back arrow: not on the message list (the app has its own tabs); it stays in a chat.
     for (const el of document.querySelectorAll(".cg-back")) if (!list) el.classList.remove("cg-back");
-    if (!list) {
-      if (box) box.style.display = "none";
-      return;
-    }
+    if (!list) { flowOff(); return; }
     const back = document.querySelector('svg[aria-label="Back"]');
     if (back) (back.closest('a, button, [role="button"]') || back).classList.add("cg-back");
 
     const compose = document.querySelector('svg[aria-label="New message"]');
     addHeart(compose);
-    if (trayState !== "failed") placeTray(compose);
+    const search = findSearch();
+    placeStories(search, compose);
+    if (html.hasAttribute("data-cg-noflow")) { flowOff(); html.setAttribute("data-cg-flow", "off"); }
+    else flowOn(search, compose);
+  }
+
+  function findSearch() {
+    return document.querySelector('input[placeholder*="Search" i], input[aria-label*="Search" i], input[type="search"]');
   }
 
   /** A heart (your activity) beside "New message", as in the app's header. */
@@ -169,95 +175,295 @@
     btn.parentElement.insertBefore(a, btn);
   }
 
-  function placeTray(compose) {
-    const search = document.querySelector('input[placeholder^="Search"]');
-    if (!search) return;
-    // The block holding Search, as a sibling of the header's block: stories go just before it.
+  // --- Stories row ---------------------------------------------------------------------------
+
+  let row = null, rowKey = "";
+  const USER = /^[A-Za-z0-9._]{1,30}$/;
+
+  function goodImage(u) {
+    try {
+      const x = new URL(u);
+      return x.protocol === "https:" && (/\.fbcdn\.net$/.test(x.hostname) || /\.cdninstagram\.com$/.test(x.hostname));
+    } catch (e) { return false; }
+  }
+
+  function storyData() {
+    const raw = html.getAttribute("data-cg-stories");
+    if (!raw) return [];
+    let list;
+    try { list = JSON.parse(raw); } catch (e) { return []; }
+    if (!Array.isArray(list)) return [];
+    return list.filter(s => s && typeof s.user === "string" && USER.test(s.user)).slice(0, 60);
+  }
+
+  function buildRow(items) {
+    const me = html.getAttribute("data-cg-me");
+    const box = row || document.createElement("div");
+    box.id = "cg-stories";
+    box.setAttribute("role", "list");
+    const keepLeft = box.scrollLeft;
+    box.textContent = "";
+    for (const s of items) {
+      const live = s.mine ? !!s.ring : true;
+      const a = document.createElement("a");
+      a.className = "cg-story" + (s.seen ? " cg-seen" : "") + (s.mine ? " cg-mine" : "") + (live ? "" : " cg-none");
+      a.setAttribute("role", "listitem");
+      a.href = s.mine ? (live ? "/stories/" + s.user + "/" : (me ? "/" + me + "/" : "/" + s.user + "/")) : "/stories/" + s.user + "/";
+      const ring = document.createElement("span");
+      ring.className = "cg-ring";
+      const img = document.createElement("img");
+      img.className = "cg-av";
+      img.alt = "";
+      img.decoding = "async";
+      img.referrerPolicy = "no-referrer";
+      if (typeof s.img === "string" && goodImage(s.img)) img.src = s.img;
+      img.addEventListener("error", () => { img.removeAttribute("src"); });
+      ring.appendChild(img);
+      a.appendChild(ring);
+      if (s.mine && !live) {
+        const plus = document.createElement("span");
+        plus.className = "cg-plus";
+        a.appendChild(plus);
+      }
+      const name = document.createElement("span");
+      name.className = "cg-name";
+      name.textContent = s.mine ? "Your story" : String(s.label || s.user).slice(0, 40);
+      a.appendChild(name);
+      box.appendChild(a);
+    }
+    box.scrollLeft = keepLeft;
+    return box;
+  }
+
+  function placeStories(search, compose) {
+    const items = storyData();
+    const key = html.getAttribute("data-cg-stories") || "";
+    if (!items.length) { if (row) row.remove(); return; }
+    if (!row || key !== rowKey) { row = buildRow(items); rowKey = key; }
+    // Just above the block holding Search (that block being a sibling of the header's block).
     let block = search;
-    if (compose) {
+    if (search && compose) {
       while (block.parentElement && !block.parentElement.contains(compose)) block = block.parentElement;
-    } else {
+    } else if (search) {
       for (let i = 0; i < 3 && block.parentElement; i++) block = block.parentElement;
+    } else if (flow.on && flow.head && flow.head.nextElementSibling) {
+      block = flow.head.nextElementSibling;   // no Search box found: just below the header
     }
-    if (!block.parentElement) return;
-    if (!spacer) {
-      spacer = document.createElement("div");
-      spacer.id = "cg-tray-spacer";
+    if (!block || !block.parentElement) return;
+    if (row.nextElementSibling !== block || row.parentElement !== block.parentElement) {
+      block.parentElement.insertBefore(row, block);
     }
-    if (spacer.nextElementSibling !== block || spacer.parentElement !== block.parentElement) {
-      block.parentElement.insertBefore(spacer, block);
-    }
-    spacer.style.height = trayH + "px";
-    if (!box) makeFrame();
-    box.style.display = trayH ? "block" : "none";
-    if (!following) { following = true; requestAnimationFrame(follow); }
   }
 
-  function makeFrame() {
-    box = document.createElement("div");
-    box.id = "cg-tray-box";
-    frame = document.createElement("iframe");
-    frame.id = "cg-tray-frame";
-    frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
-    frame.setAttribute("scrolling", "no");
-    frame.setAttribute("title", "Stories");
-    frame.src = "/";
-    box.appendChild(frame);
-    document.body.appendChild(box);
-    trayState = "loading";
-    document.documentElement.setAttribute("data-cg-tray", "loading");
-    // No word from the frame in 15 s: Instagram won't be framed here; the app takes over.
-    setTimeout(() => {
-      if (trayState !== "ok") {
-        trayState = "failed";
-        document.documentElement.setAttribute("data-cg-tray", "failed");
-        if (box) box.remove();
-        box = frame = null;
-        if (spacer) spacer.remove();
+  // --- one scroll for the whole inbox --------------------------------------------------------
+
+  const flow = { on: false, P: null, L: null, head: null, spacer: null, holder: null, touched: [],
+    S: 0, V: 0, top: 0, stick: 0, lastL: -1, nextTry: 0, sweeps: 0 };
+
+  /** Inline styles, each remembered so leaving the list puts Instagram's page back exactly. */
+  function setStyle(el, props) {
+    let rec = flow.touched.find(t => t.el === el);
+    if (!rec) { rec = { el, old: {} }; flow.touched.push(rec); }
+    for (const k in props) {
+      if (!(k in rec.old)) rec.old[k] = [el.style.getPropertyValue(k), el.style.getPropertyPriority(k)];
+      if (el.style.getPropertyValue(k) !== String(props[k]) || el.style.getPropertyPriority(k) !== "important") {
+        el.style.setProperty(k, String(props[k]), "important");
       }
-    }, 15000);
+    }
   }
 
-  /** Keep the frame over its spacer, clipped below the header if the header stays put. */
-  function follow() {
-    if (!box || box.style.display === "none" || !spacer || !spacer.isConnected || !onList()) {
-      following = false;
-      if (box && (!onList() || !spacer || !spacer.isConnected)) box.style.display = "none";
-      return;
-    }
-    const r = spacer.getBoundingClientRect();
-    let clip = 0;
-    const compose = document.querySelector('svg[aria-label="New message"]');
-    for (let el = compose, i = 0; el && el !== document.body && i < 10; i++, el = el.parentElement) {
-      const pos = getComputedStyle(el).position;
-      if (pos === "sticky" || pos === "fixed") { clip = Math.max(0, el.getBoundingClientRect().bottom); break; }
-    }
-    box.style.top = clip + "px";
-    box.style.height = Math.max(0, innerHeight - clip) + "px";
-    frame.style.transform = "translateY(" + Math.round(r.top - clip) + "px)";
-    requestAnimationFrame(follow);
-  }
-
-  if (IS_TOP) {
-    addEventListener("message", (e) => {
-      if (e.origin !== location.origin || !e.data || typeof e.data !== "object" || !e.data.cg) return;
-      const d = e.data;
-      if (d.cg === "tray-height" && typeof d.h === "number") {
-        trayH = Math.min(240, Math.max(0, Math.round(d.h)));
-        trayState = "ok";
-        document.documentElement.setAttribute("data-cg-tray", "ok");
-        if (frame) frame.style.height = trayH + "px";
-        if (spacer) spacer.style.height = trayH + "px";
-        if (box && onList()) box.style.display = "block";
-        if (!following && box) { following = true; requestAnimationFrame(follow); }
-      } else if (d.cg === "story" && typeof d.user === "string" && /^[A-Za-z0-9._]{1,30}$/.test(d.user)) {
-        location.assign("/stories/" + d.user + "/");
-      } else if (d.cg === "my-story") {
-        const me = document.documentElement.getAttribute("data-cg-me");
-        if (me) location.assign("/stories/" + me + "/");
+  function flowOff() {
+    if (!flow.on && !flow.touched.length) return;
+    if (flow.P) flow.P.removeEventListener("scroll", onColumnScroll);
+    if (flow.L) flow.L.removeEventListener("scroll", onListScroll);
+    removeEventListener("resize", onResize);
+    for (const { el, old } of flow.touched) {
+      for (const k in old) {
+        const [v, p] = old[k];
+        if (v) el.style.setProperty(k, v, p); else el.style.removeProperty(k);
       }
+    }
+    if (flow.spacer) flow.spacer.remove();
+    if (flow.holder) flow.holder.remove();
+    Object.assign(flow, { on: false, P: null, L: null, head: null, spacer: null, holder: null, touched: [], lastL: -1 });
+  }
+
+  /** The conversation list: the biggest thing below the top of the inbox that scrolls up and down. */
+  function findList(anchor) {
+    let col = anchor;
+    while (col.parentElement && col.parentElement !== document.body && col.getBoundingClientRect().height < innerHeight * 0.6) {
+      col = col.parentElement;
+    }
+    const below = anchor.getBoundingClientRect().bottom - 4;
+    let best = null, bestH = 0;
+    for (const el of col.querySelectorAll("div, ul, section")) {
+      const h = el.clientHeight;
+      if (h < 120 || h <= bestH || el.contains(anchor)) continue;
+      const oy = getComputedStyle(el).overflowY;
+      if (oy !== "auto" && oy !== "scroll") continue;
+      if (el.getBoundingClientRect().top < below) continue;
+      best = el;
+      bestH = h;
+    }
+    return best;
+  }
+
+  function pageBackground() {
+    for (let el = flow.P; el; el = el.parentElement) {
+      const c = getComputedStyle(el).backgroundColor;
+      if (c && c !== "transparent" && !/rgba\(.*,\s*0\)$/.test(c)) return c;
+    }
+    return matchMedia("(prefers-color-scheme: dark)").matches ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)";
+  }
+
+  function flowOn(search, compose) {
+    if (flow.on) {
+      // Still Instagram's same list and column? Then just keep the sizes right.
+      if (flow.P.isConnected && flow.L.isConnected && flow.P.contains(flow.L)) {
+        if (!flow.spacer.isConnected || flow.spacer.previousSibling !== flow.L) {
+          flow.L.parentElement.insertBefore(flow.spacer, flow.L.nextSibling);
+        }
+        if (++flow.sweeps % 10 === 0) unstick();
+        flowMeasure();
+        return;
+      }
+      flowOff();
+    }
+    const now = Date.now();
+    if (now < flow.nextTry) return;
+    flow.nextTry = now + 800;
+    const anchor = search || compose;
+    if (!anchor) { html.setAttribute("data-cg-flow", "no-anchor"); return; }
+    const L = findList(anchor);
+    if (!L) { html.setAttribute("data-cg-flow", "no-list"); return; }
+    let P = L.parentElement;
+    while (P && !P.contains(anchor)) P = P.parentElement;
+    if (!P || P === document.body || P === html) { html.setAttribute("data-cg-flow", "no-column"); return; }
+
+    flow.on = true;
+    flow.P = P;
+    flow.L = L;
+
+    // The header (username, heart, New message) stays put: everything else scrolls under it.
+    flow.head = null;
+    if (compose && P.contains(compose)) {
+      let h = compose;
+      while (h.parentElement && h.parentElement !== P && !h.parentElement.contains(L)
+             && !(search && h.parentElement.contains(search))) h = h.parentElement;
+      flow.head = h;
+    }
+
+    // The column scrolls; between it and the list nothing holds a fixed height any more.
+    for (let el = L.parentElement; el && el !== P; el = el.parentElement) {
+      setStyle(el, { height: "auto", "max-height": "none", "min-height": "0", "overflow-y": "visible" });
+      columnChild(el);
+    }
+    columnChild(L);
+    setStyle(P, { "overflow-y": "auto", "overscroll-behavior-y": "contain", "max-height": "none", "min-height": "0" });
+
+    flow.spacer = document.createElement("div");
+    flow.spacer.className = "cg-flow-spacer";
+    L.parentElement.insertBefore(flow.spacer, L.nextSibling);
+
+    pinHeader();
+    unstick();
+    flowMeasure();
+    P.addEventListener("scroll", onColumnScroll, { passive: true });
+    L.addEventListener("scroll", onListScroll, { passive: true });
+    addEventListener("resize", onResize, { passive: true });
+    if (L.scrollTop > 0) P.scrollTop = L.scrollTop + flow.stick;
+    html.setAttribute("data-cg-flow", "on");
+  }
+
+  /** In a top-to-bottom flex box, a child keeps its own height instead of being squeezed to fit. */
+  function columnChild(el) {
+    const p = el.parentElement;
+    if (!p) return;
+    const cs = getComputedStyle(p);
+    if (/flex/.test(cs.display) && /column/.test(cs.flexDirection)) setStyle(el, { "flex-grow": "0", "flex-shrink": "0" });
+  }
+
+  function pinHeader() {
+    const h = flow.head;
+    if (!h) return;
+    for (let el = h; el && el !== flow.P; el = el.parentElement) {
+      if (getComputedStyle(el).position === "fixed") return;   // already stays put
+    }
+    const bg = pageBackground();
+    if (h.parentElement === flow.P) {
+      setStyle(h, { position: "sticky", top: "0px", "z-index": "3", "background-color": bg });
+    } else {
+      // Deeper inside: held in place over the column, with a stand-in keeping its room.
+      const r = h.getBoundingClientRect();
+      flow.holder = document.createElement("div");
+      flow.holder.className = "cg-flow-holder";
+      flow.holder.style.height = r.height + "px";
+      h.parentElement.insertBefore(flow.holder, h);
+      setStyle(h, { position: "fixed", top: r.top + "px", left: r.left + "px", width: r.width + "px",
+        "z-index": "3", "background-color": bg });
+    }
+  }
+
+  /** Nothing in the top part stays stuck while scrolling (Search, Notes, "Messages"): it all moves. */
+  function unstick() {
+    const P = flow.P, L = flow.L, head = flow.head;
+    const walker = document.createTreeWalker(P, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: (n) => (n === L || n === head || n === row) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
     });
+    let n = 0;
+    for (let el = walker.nextNode(); el && n < 3000; el = walker.nextNode(), n++) {
+      if (el.contains(L)) continue;
+      if (getComputedStyle(el).position === "sticky") setStyle(el, { position: "relative", top: "auto" });
+    }
   }
+
+  /** Sizes: the column fills the screen, the list exactly the room under the header. */
+  function flowMeasure() {
+    if (!flow.on) return;
+    const P = flow.P, L = flow.L;
+    const pr = P.getBoundingClientRect();
+    const ph = Math.max(200, Math.round(innerHeight - Math.max(0, pr.top)));
+    setStyle(P, { height: ph + "px" });
+    let top = 0;
+    if (flow.head) top = Math.max(0, Math.round(flow.head.getBoundingClientRect().bottom - pr.top));
+    if (top > ph / 2) top = 0;
+    const V = Math.max(120, P.clientHeight - top);
+    setStyle(L, { position: "sticky", top: top + "px", height: V + "px", "max-height": "none", "min-height": "0",
+      "overflow-y": "hidden", "overscroll-behavior": "none" });
+    const S = Math.max(0, L.scrollHeight - L.clientHeight);
+    if (S !== flow.S || !flow.spacer.style.height) { flow.S = S; flow.spacer.style.height = S + "px"; }
+    flow.V = V;
+    flow.top = top;
+    // Where the list's own scrolling begins: once its natural place reaches the header.
+    const spacerAt = flow.spacer.getBoundingClientRect().top - pr.top + P.scrollTop;
+    flow.stick = Math.max(0, Math.round(spacerAt - V - top));
+  }
+
+  function onResize() {
+    // A header held in place has to be measured afresh; otherwise sizes simply follow.
+    if (flow.holder) { flowOff(); flow.nextTry = 0; schedule(); } else flowMeasure();
+  }
+
+  function onColumnScroll() {
+    if (!flow.on) return;
+    const L = flow.L;
+    if (L.scrollHeight - L.clientHeight !== flow.S) flowMeasure();
+    const want = Math.max(0, Math.min(flow.S, flow.P.scrollTop - flow.stick));
+    if (Math.abs(L.scrollTop - want) >= 1) L.scrollTop = want;
+    flow.lastL = L.scrollTop;
+  }
+
+  /** Instagram moved its list itself (putting you back where you were): the column follows. */
+  function onListScroll() {
+    if (!flow.on) return;
+    const L = flow.L;
+    if (Math.abs(L.scrollTop - flow.lastL) < 2) return;
+    flow.lastL = L.scrollTop;
+    if (L.scrollHeight - L.clientHeight !== flow.S) flowMeasure();
+    if (L.scrollTop > 0) flow.P.scrollTop = L.scrollTop + flow.stick;
+  }
+
+  new MutationObserver(() => schedule()).observe(html, { attributes: true, attributeFilter: ["data-cg-stories", "data-cg-noflow"] });
 
   // At most five sweeps a second, however busy the page: long DM threads change constantly.
   let queued = false;

@@ -21,12 +21,41 @@ html[data-cg-route="post"] main a[href^="/reel/"] video { visibility: hidden !im
 /* Nothing selects text by accident on a long-press, like an app. */
 html[data-cg] { -webkit-tap-highlight-color: transparent; }
 
-/* The inbox, laid out like the app: no back arrow on the list, a heart beside New message,
-   the Stories row (a frame following its spacer, under the header). */
+/* The inbox, laid out like the app: no back arrow on the list, a heart beside New message. */
 .cg-back { display: none !important; }
 .cg-heart { display: inline-flex; align-items: center; justify-content: center; color: inherit;
   width: 40px; height: 40px; margin-right: 4px; }
-#cg-tray-spacer { width: 100%; flex: none; }
-#cg-tray-box { position: fixed; left: 0; right: 0; overflow: hidden; pointer-events: none; z-index: 2; display: none; }
-#cg-tray-frame { display: block; width: 100%; height: 120px; border: 0; background: transparent;
-  pointer-events: auto; will-change: transform; color-scheme: normal; }
+.cg-flow-spacer, .cg-flow-holder { display: block; width: 100%; flex: none; pointer-events: none; }
+
+/* Stories, above Search, sized like the app's row. */
+#cg-stories {
+  --cg-bg: #fff; --cg-text: #000; --cg-seen: #c7c7c7; --cg-blank: #efefef;
+  display: flex; flex: none; gap: 0; width: 100%; box-sizing: border-box;
+  padding: 6px 6px 10px; overflow-x: auto; overflow-y: hidden;
+  overscroll-behavior-x: contain; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+@media (prefers-color-scheme: dark) {
+  #cg-stories { --cg-bg: #000; --cg-text: #f5f5f5; --cg-seen: #363636; --cg-blank: #262626; }
+}
+#cg-stories::-webkit-scrollbar { display: none; }
+.cg-story { position: relative; flex: none; width: 80px; display: flex; flex-direction: column;
+  align-items: center; text-decoration: none !important; color: var(--cg-text) !important;
+  -webkit-tap-highlight-color: transparent; }
+.cg-story:active .cg-ring { transform: scale(.94); }
+.cg-ring { width: 68px; height: 68px; border-radius: 50%; padding: 2.5px; box-sizing: border-box;
+  background: linear-gradient(45deg, #feda75 0%, #fa7e1e 25%, #d62976 50%, #962fbf 75%, #4f5bd5 100%);
+  transition: transform .12s ease; }
+.cg-seen .cg-ring { background: var(--cg-seen); padding: 1.5px; }
+.cg-none .cg-ring { background: transparent; padding: 0; }
+.cg-av { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover;
+  box-sizing: border-box; border: 3px solid var(--cg-bg); background: var(--cg-blank); }
+.cg-seen .cg-av { border-width: 3.5px; }
+.cg-none .cg-av { border: 0; }
+.cg-plus { position: absolute; top: 47px; left: 53px; width: 22px; height: 22px; border-radius: 50%;
+  box-sizing: border-box; border: 2.5px solid var(--cg-bg); background: #0095f6; }
+.cg-plus::before, .cg-plus::after { content: ""; position: absolute; left: 50%; top: 50%; background: #fff;
+  border-radius: 1px; transform: translate(-50%, -50%); }
+.cg-plus::before { width: 9px; height: 2px; }
+.cg-plus::after { width: 2px; height: 9px; }
+.cg-name { margin-top: 5px; max-width: 74px; font-size: 12px; line-height: 16px; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis; text-align: center; }
