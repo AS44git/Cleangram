@@ -43,6 +43,12 @@ jobs:
           yes | "$sdkmanager" --licenses > /dev/null || true
           "$sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null
 
+      - name: Your own icon (icon.png at the top of the repo, if there is one)
+        if: hashFiles('icon.png') != ''
+        run: |
+          pip install --quiet pillow
+          python3 .github/custom_icon.py icon.png
+
       - name: Build the APK
         run: |
           gradle --no-daemon --stacktrace :app:assembleRelease \
