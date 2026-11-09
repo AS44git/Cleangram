@@ -54,17 +54,7 @@
     if (!document.body) return;
     if (IS_TOP) inbox();
 
-    // Instagram's own tab bar (the app has its own): the smallest block holding its links to
-    // Explore or Reels together with Home or Messages, wherever it sits.
-    for (const a of document.querySelectorAll('a[href="/explore/"], a[href="/reels/"]')) {
-      let el = a.parentElement;
-      for (let i = 0; el && el !== document.body && i < 10; i++, el = el.parentElement) {
-        if (el.querySelector('a[href="/"], a[href^="/direct/"]')) {
-          if (el.getBoundingClientRect().height < 120) el.classList.add("cg-hide");
-          break;
-        }
-      }
-    }
+    hideTabBar();
 
     // Banners and notes Cleangram leaves out, found by their words: "open the app",
     // "Instagram Lite", "You're all caught up", suggestions.
@@ -80,6 +70,23 @@
         const t = (el.textContent || "").trim();
         if (t.length === 0 || t.length > 60 || !UNWANTED.test(t)) continue;
         hideAround(el, inThread);
+      }
+    }
+  }
+
+  /**
+   * Instagram's own tab bar (the app has its own): the smallest block holding its links to
+   * Explore or Reels together with Home or Messages, wherever it sits. Also run the moment it's
+   * added to the page, before it's ever drawn, so it never flashes up while changing tabs.
+   */
+  function hideTabBar() {
+    for (const a of document.querySelectorAll('a[href="/explore/"], a[href="/reels/"]')) {
+      let el = a.parentElement;
+      for (let i = 0; el && el !== document.body && i < 10; i++, el = el.parentElement) {
+        if (el.querySelector('a[href="/"], a[href^="/direct/"]')) {
+          if (!el.classList.contains("cg-hide") && el.getBoundingClientRect().height < 120) el.classList.add("cg-hide");
+          break;
+        }
       }
     }
   }
@@ -151,6 +158,7 @@
 
     const compose = document.querySelector('svg[aria-label="New message"]');
     addHeart(compose);
+    alignHeart(compose);
     const search = findSearch();
     placeStories(search, compose);
     if (html.hasAttribute("data-cg-noflow")) { flowOff(); html.setAttribute("data-cg-flow", "off"); }
@@ -173,6 +181,25 @@
       'stroke-width="2" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-9.2-9.3C1.6 7.6 3.9 4 7.5 4c2 0 3.5 1.1 4.5 ' +
       '2.6C13 5.1 14.5 4 16.5 4c3.6 0 5.9 3.6 4.7 7.2-1.7 4.7-9.2 9.3-9.2 9.3z"/></svg>';
     btn.parentElement.insertBefore(a, btn);
+  }
+
+  /**
+   * The heart and the pencil on one line, the same size, as far apart as in the app, wherever
+   * Instagram's header puts the pencil.
+   */
+  function alignHeart(compose) {
+    const heart = document.querySelector(".cg-heart");
+    if (!heart || !compose) return;
+    const hs = heart.querySelector("svg");
+    const cr = compose.getBoundingClientRect();
+    if (!hs || !cr.width) return;
+    const size = String(Math.round(Math.max(22, Math.min(30, cr.width + 1))));
+    if (hs.getAttribute("width") !== size) { hs.setAttribute("width", size); hs.setAttribute("height", size); }
+    heart.style.transform = "none";
+    const hr = hs.getBoundingClientRect();
+    const dx = Math.round(cr.left + cr.width / 2 - 47 - (hr.left + hr.width / 2));
+    const dy = Math.round(cr.top + cr.height / 2 - (hr.top + hr.height / 2));
+    heart.style.transform = "translate(" + dx + "px," + dy + "px)";
   }
 
   // --- Stories row ---------------------------------------------------------------------------
@@ -261,6 +288,9 @@
     if (row.nextElementSibling !== block || row.parentElement !== block.parentElement) {
       block.parentElement.insertBefore(row, block);
     }
+    // The gap around each picture is the page's own background colour.
+    const bg = pageBackground(block.parentElement);
+    if (row.style.getPropertyValue("--cg-bg") !== bg) row.style.setProperty("--cg-bg", bg);
   }
 
   // --- one scroll for the whole inbox --------------------------------------------------------
@@ -319,8 +349,8 @@
     return best;
   }
 
-  function pageBackground() {
-    for (let el = flow.P; el; el = el.parentElement) {
+  function pageBackground(from) {
+    for (let el = from || flow.P; el; el = el.parentElement) {
       const c = getComputedStyle(el).backgroundColor;
       if (c && c !== "transparent" && !/rgba\(.*,\s*0\)$/.test(c)) return c;
     }
@@ -535,8 +565,15 @@
     }), wait);
   }
 
+  const NAV_LINK = 'a[href="/explore/"], a[href="/reels/"]';
   new MutationObserver((records) => {
-    for (const rec of records) for (const n of rec.addedNodes) if (n.nodeType === 1) added.push(n);
+    let nav = false;
+    for (const rec of records) for (const n of rec.addedNodes) {
+      if (n.nodeType !== 1) continue;
+      added.push(n);
+      if (!nav && (n.matches(NAV_LINK) || n.querySelector(NAV_LINK))) nav = true;
+    }
+    if (nav && document.body) { try { hideTabBar(); } catch (e) { /* never break the page */ } }
     schedule();
   }).observe(document.documentElement, { childList: true, subtree: true });
   addEventListener("popstate", schedule);

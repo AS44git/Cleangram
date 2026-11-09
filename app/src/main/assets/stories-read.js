@@ -37,6 +37,7 @@
     return null;
   }
 
+  const ME = String("__CG_ME__").toLowerCase();
   const tray = findTray();
   if (!tray) return "";
   const out = [];
@@ -52,7 +53,7 @@
     const label = (item.innerText || "").trim().split("\n").filter(Boolean).pop() || m[1];
     const aria = ((item.closest("[aria-label]") || item).getAttribute("aria-label") || "") + " " +
       Array.from(item.querySelectorAll("[aria-label]")).map(e => e.getAttribute("aria-label")).join(" ");
-    const mine = /^your story$/i.test(label);
+    const mine = /^your story$/i.test(label) || m[1].toLowerCase() === ME;
     const user = m[1];
     if (seenUsers.has(user)) continue;
     seenUsers.add(user);
@@ -64,6 +65,14 @@
       seen: /\bseen\b/i.test(aria) && !/not seen|unseen/i.test(aria),
       ring: !!item.querySelector("canvas"),   // Instagram draws the ring of a live story
     });
+  }
+  // "Your story" always comes first, as in the app (with a + when there's no story up).
+  const at = out.findIndex((s) => s.mine);
+  if (at > 0) out.unshift(out.splice(at, 1)[0]);
+  if (at < 0 && /^[a-z0-9._]{1,30}$/.test(ME)) {
+    const pic = Array.from(document.querySelectorAll("img[alt]"))
+      .find((i) => (i.getAttribute("alt") || "").toLowerCase().replace("’", "'") === ME + "'s profile picture");
+    out.unshift({ user: ME, label: "Your story", img: pic ? (pic.currentSrc || pic.src || "") : "", mine: true, seen: false, ring: false });
   }
   return out.length ? JSON.stringify(out) : "";
 })()

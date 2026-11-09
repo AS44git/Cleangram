@@ -387,7 +387,8 @@ class MainActivity : AppCompatActivity() {
     /** Read the Stories row off the Home page: soon after it loads, then every half minute. */
     private fun readStories(gen: Int, attempt: Int) {
         if (isFinishing || gen != trayGen) return
-        tray.evaluateJavascript(readStoriesJs) { value ->
+        val js = readStoriesJs.replace("\"__CG_ME__\"", JSONObject.quote(prefs.getString("me", null) ?: ""))
+        tray.evaluateJavascript(js) { value ->
             trayReads++
             val json = runCatching { JSONTokener(value).nextValue() as? String }.getOrNull()
             if (!json.isNullOrEmpty()) {
