@@ -485,7 +485,7 @@
     if (top > ph / 2) top = 0;
     const V = Math.max(120, P.clientHeight - top);
     setStyle(L, { position: "sticky", top: top + "px", height: V + "px", "max-height": "none", "min-height": "0",
-      "overflow-y": "hidden", "overscroll-behavior": "none" });
+      "overflow-y": "hidden", "overscroll-behavior": "auto" });
     const S = Math.max(0, L.scrollHeight - L.clientHeight);
     if (S !== flow.S || !flow.spacer.style.height) { flow.S = S; flow.spacer.style.height = S + "px"; }
     flow.V = V;
